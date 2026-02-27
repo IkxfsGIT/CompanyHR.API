@@ -33,7 +33,7 @@ if (string.IsNullOrEmpty(connectionString))
     // Режим разработки без реальной БД — используем InMemory
     builder.Services.AddDbContext<ApplicationDbContext>(options =>
         options.UseInMemoryDatabase("CompanyHR"));
-    Console.WriteLine("⚠️ Используется InMemoryDatabase (нет строки подключения)");
+    Console.WriteLine("Используется InMemoryDatabase (нет строки подключения)");
 }
 else
 {
@@ -71,6 +71,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 // ========== Авторизация (роли) ==========
 builder.Services.AddAuthorization();
+
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 // ========== Swagger (OpenAPI) ==========
 builder.Services.AddEndpointsApiExplorer();
@@ -184,14 +186,30 @@ if (!string.IsNullOrEmpty(connectionString))
         try
         {
             dbContext.Database.Migrate();
-            Console.WriteLine("✅ Миграции применены успешно");
+            Console.WriteLine("Миграции применены успешно");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ Ошибка применения миграций: {ex.Message}");
+            Console.WriteLine($"Ошибка применения миграций: {ex.Message}");
         }
     }
 }
+
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<ICacheService, CacheService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
+
+// Настройки JWT и Email
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
+builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));
+
+// Если используете Redis
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = builder.Configuration.GetConnectionString("Redis");
+});
+// Или для разработки можно использовать MemoryDistributedCache
+// builder.Services.AddDistributedMemoryCache();
 
 // ========================================================
 // 3. Конвейер обработки запросов (Middleware)
