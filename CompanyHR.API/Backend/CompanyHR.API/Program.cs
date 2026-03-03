@@ -28,27 +28,19 @@ var builder = WebApplication.CreateBuilder(args);
 // ========================================================
 
 // Добавление контроллеров с настройками JSON
-builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-    {
-        // Настройка формата дат
-        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
-        
-        // Игнорирование циклических ссылок
-        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
-        
-        // Формат дат
-        options.JsonSerializerOptions.Converters.Add(new IsoDateTimeConverter
-        {
-            DateTimeFormat = "yyyy-MM-ddTHH:mm:ss.fffZ"
-        });
-        
-        // Использование camelCase для свойств (стандарт для JSON API)
-        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-        
-        // Игнорирование null значений (опционально)
-        options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
-    });
+builder.Services.AddControllers(options =>
+{
+    // Глобальная регистрация фильтров
+    options.Filters.Add<ApiExceptionFilterAttribute>();
+    options.Filters.Add<ValidateModelAttribute>();
+})
+.AddJsonOptions(options =>
+{
+    options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+    options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+})
+.AddFluentValidationAutoValidation();
 
 builder.Services.AddApiVersioning(options =>
 {
@@ -81,6 +73,11 @@ builder.Services.AddAutoMapper(typeof(Program));
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
 // ========== Аутентификация JWT ==========
+
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
+builder.Services.AddScoped<JwtHelper>();
+
+
 var jwtKey = builder.Configuration["Jwt:Key"] ?? "default_super_secret_key_32_chars_minimum_1234567890";
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "CompanyHR";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "CompanyHRUsers";
