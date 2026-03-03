@@ -18,6 +18,8 @@ using Newtonsoft.Json.Converters;
 using CompanyHR.API.Extensions;
 using CompanyHR.API.Enums;
 using CompanyHR.API.Constants;
+using CompanyHR.API.Filters;
+using CompanyHR.API.Helpers;
 
 var builder = WebApplication.CreateBuilder(args);
 
