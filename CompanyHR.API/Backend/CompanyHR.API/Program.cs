@@ -1,47 +1,47 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using CompanyHR.API.Constants;
 using CompanyHR.API.Data;
+using CompanyHR.API.Extensions;
+using CompanyHR.API.Filters;
+using CompanyHR.API.Helpers;
 using CompanyHR.API.Middleware;
-using CompanyHR.API.Models;
+using CompanyHR.API.Services;
+using CompanyHR.API.Repositories;
+using CompanyHR.API.Repositories.Interfaces;
+using CompanyHR.API.BackgroundServices;
 using FluentValidation.AspNetCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Versioning;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using System.Text.Json.Serialization;
-using CompanyHR.API.Filters;
-using CompanyHR.API.Constants;
-using CompanyHR.API.DTOs.Responses;
-using FluentValidation.AspNetCore;
-using Microsoft.AspNetCore.Mvc;
-using Newtonsoft.Json.Converters;
-using CompanyHR.API.Extensions;
-using CompanyHR.API.Enums;
-using CompanyHR.API.Constants;
-using CompanyHR.API.Filters;
-using CompanyHR.API.Helpers;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ========================================================
-// 1. Конфигурация сервисов (DI)
+// 1. Регистрация сервисов в контейнере внедрения зависимостей
 // ========================================================
 
-// Добавление контроллеров с настройками JSON
+// ----- Контроллеры, фильтры, сериализация -----
 builder.Services.AddControllers(options =>
 {
-    // Глобальная регистрация фильтров
+    // Глобальные фильтры
     options.Filters.Add<ApiExceptionFilterAttribute>();
     options.Filters.Add<ValidateModelAttribute>();
 })
 .AddJsonOptions(options =>
 {
+    // Настройка сериализации JSON
     options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
     options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
     options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
 })
-.AddFluentValidationAutoValidation();
+.AddFluentValidationAutoValidation();   // Автоматическая валидация через FluentValidation
 
+// ----- Версионирование API -----
 builder.Services.AddApiVersioning(options =>
 {
     options.DefaultApiVersion = new ApiVersion(1, 0);
@@ -50,37 +50,36 @@ builder.Services.AddApiVersioning(options =>
     options.ApiVersionReader = new UrlSegmentApiVersionReader();
 });
 
-// ========== База данных ==========
+// ----- База данных -----
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 if (string.IsNullOrEmpty(connectionString))
 {
-    // Режим разработки без реальной БД — используем InMemory
+    // Режим разработки без реальной БД — использование InMemory
     builder.Services.AddDbContext<ApplicationDbContext>(options =>
         options.UseInMemoryDatabase("CompanyHR"));
-    Console.WriteLine("Используется InMemoryDatabase (нет строки подключения)");
+    Console.WriteLine("Используется InMemoryDatabase (строка подключения отсутствует)");
 }
 else
 {
-    // Реальная PostgreSQL
+    // Подключение к PostgreSQL
     builder.Services.AddDbContext<ApplicationDbContext>(options =>
         options.UseNpgsql(connectionString));
 }
 
-// ========== AutoMapper ==========
+// ----- AutoMapper -----
 builder.Services.AddAutoMapper(typeof(Program));
 
-// ========== FluentValidation (регистрация валидаторов) ==========
+// ----- FluentValidation (регистрация валидаторов) -----
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
-// ========== Аутентификация JWT ==========
-
+// ----- Аутентификация JWT -----
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
 builder.Services.AddScoped<JwtHelper>();
 
-
-var jwtKey = builder.Configuration["Jwt:Key"] ?? "default_super_secret_key_32_chars_minimum_1234567890";
-var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "CompanyHR";
-var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "CompanyHRUsers";
+var jwtSettings = builder.Configuration.GetSection("Jwt").Get<JwtSettings>();
+var jwtKey = jwtSettings?.Key ?? "default_super_secret_key_32_chars_minimum_1234567890";
+var jwtIssuer = jwtSettings?.Issuer ?? "CompanyHR";
+var jwtAudience = jwtSettings?.Audience ?? "CompanyHRUsers";
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -94,56 +93,64 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = jwtIssuer,
             ValidAudience = jwtAudience,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ClockSkew = TimeSpan.Zero // уменьшаем допустимый сдвиг времени
+            ClockSkew = TimeSpan.Zero   // Уменьшение допустимого сдвига времени
         };
     });
 
-// ========== Автоматическая валидация DTO =============
-builder.Services.AddFluentValidationAutoValidation();
-builder.Services.AddFluentValidationClientsideAdapters();
-builder.Services.AddValidatorsFromAssemblyContaining<Program>();
-
-// ========== Авторизация (роли) ==========
-builder.Services.AddAuthorization();
-
-builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
-
-builder.Services.AddHostedService<EmployeeNotificationService>();
-
+// ----- Авторизация (политики на основе ролей) -----
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy(ApplicationConstants.Policies.RequireAdmin, 
+    options.AddPolicy(ApplicationConstants.Policies.RequireAdmin,
         policy => policy.RequireRole(Roles.Admin));
-    
-    options.AddPolicy(ApplicationConstants.Policies.RequireHR, 
+    options.AddPolicy(ApplicationConstants.Policies.RequireHR,
         policy => policy.RequireRole(Roles.HR));
-    
-    options.AddPolicy(ApplicationConstants.Policies.RequireAdminOrHR, 
+    options.AddPolicy(ApplicationConstants.Policies.RequireAdminOrHR,
         policy => policy.RequireRole(Roles.Admin, Roles.HR));
-    
-    options.AddPolicy(ApplicationConstants.Policies.RequireManager, 
+    options.AddPolicy(ApplicationConstants.Policies.RequireManager,
         policy => policy.RequireRole(Roles.Manager));
 });
 
-// Регистрация Unit of Work и репозиториев
+// ----- Репозитории и Unit of Work -----
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 
-// Регистрация сервисов
+// ----- Бизнес-сервисы -----
+builder.Services.AddScoped<IEmployeeService, EmployeeService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IPositionService, PositionService>();
 builder.Services.AddScoped<IStatisticsService, StatisticsService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
+
+// ----- Сервисы кэширования -----
 builder.Services.AddScoped<ICacheService, CacheService>();
+// Выбор провайдера кэша: Redis (если настроен) или In-Memory
+var redisConnection = builder.Configuration.GetConnectionString("Redis");
+if (!string.IsNullOrEmpty(redisConnection))
+{
+    builder.Services.AddStackExchangeRedisCache(options =>
+    {
+        options.Configuration = redisConnection;
+    });
+}
+else
+{
+    builder.Services.AddDistributedMemoryCache();
+}
 
-builder.Services.AddDistributedMemoryCache();
+// ----- Фоновые службы -----
+builder.Services.AddHostedService<EmployeeNotificationService>();
 
-// ========== Swagger (OpenAPI) ==========
+// ----- Настройки для Email и JWT (через IOptions) -----
+builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));
+
+// ----- Swagger (OpenAPI) -----
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo
     {
-        Title = "Company HR API",
-        Version = "v1",
+        Title = ApplicationConstants.ApplicationName,
+        Version = ApplicationConstants.ApplicationVersion,
         Description = "API для управления сотрудниками компании",
         Contact = new OpenApiContact
         {
@@ -152,10 +159,10 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 
-    // Добавляем поддержку JWT в Swagger
+    // Добавление поддержки JWT в Swagger
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header. Example: \"Bearer {token}\"",
+        Description = "JWT Authorization header. Пример: \"Bearer {token}\"",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
@@ -177,7 +184,7 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 
-    // Включение XML-комментариев (если есть)
+    // Включение XML-комментариев (если файл существует)
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
     var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
     if (File.Exists(xmlPath))
@@ -186,74 +193,46 @@ builder.Services.AddSwaggerGen(c =>
     }
 });
 
-// ========== CORS ==========
+// ----- CORS (политики доступа) -----
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("FlutterClient", policy =>
-    {
-        policy.WithOrigins(
-                "http://localhost:8080",  // Flutter web
-                "http://localhost:3000",  // Альтернативный порт
-                "http://localhost:5000",  // Сам API
-                "http://127.0.0.1:8080")
-            .AllowAnyMethod()
-            .AllowAnyHeader()
-            .AllowCredentials();
-    });
-
-    builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowFlutterApp", policy =>
-    {
-        policy.WithOrigins(
-                "http://localhost:8080",      // Flutter web
-                "http://localhost:5000",      // Сам API
-                "http://localhost:3000")      // Альтернативный порт
-              .AllowAnyMethod()
-              .AllowAnyHeader()
-              .AllowCredentials();
-    });
-});
-
-    // Более широкая политика для разработки (опционально)
+    // Политика для разработки (разрешены все источники)
     options.AddPolicy("Development", policy =>
     {
         policy.AllowAnyOrigin()
               .AllowAnyMethod()
               .AllowAnyHeader();
     });
+
+    // Политика для Flutter-клиента (ограниченные источники)
+    options.AddPolicy("FlutterClient", policy =>
+    {
+        policy.WithOrigins(
+                "http://localhost:8080",
+                "http://localhost:3000",
+                "http://localhost:5000",
+                "http://127.0.0.1:8080")
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
+    });
+
+    // Политика для продакшена (можно дополнить)
+    options.AddPolicy("Production", policy =>
+    {
+        policy.WithOrigins("https://company-hr-frontend.vercel.app")
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
+    });
 });
-
-// ========== Регистрация пользовательских сервисов ==========
-builder.Services.AddScoped<IEmployeeService, EmployeeService>();
-builder.Services.AddScoped<IAuthService, AuthService>();
-// Добавьте другие ваши сервисы по аналогии
-
-// ========== Фоновые службы (Background Services) ==========
-// builder.Services.AddHostedService<EmployeeNotificationService>(); // раскомментируйте, когда создадите
-
-// ========== Кэширование (Redis) ==========
-// var redisConnection = builder.Configuration.GetConnectionString("Redis");
-// if (!string.IsNullOrEmpty(redisConnection))
-// {
-//     builder.Services.AddStackExchangeRedisCache(options =>
-//     {
-//         options.Configuration = redisConnection;
-//     });
-// }
-
-// ========== Логирование через Serilog (опционально) ==========
-// builder.Host.UseSerilog((context, config) =>
-// {
-//     config.ReadFrom.Configuration(context.Configuration);
-// });
 
 // ========================================================
 // 2. Сборка приложения
 // ========================================================
 var app = builder.Build();
 
-// ========== Применение миграций при запуске (только для реальной БД) ==========
+// ========== Применение миграций (только для реальной БД) ==========
 if (!string.IsNullOrEmpty(connectionString))
 {
     using (var scope = app.Services.CreateScope())
@@ -271,63 +250,51 @@ if (!string.IsNullOrEmpty(connectionString))
     }
 }
 
-builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<ICacheService, CacheService>();
-builder.Services.AddScoped<IEmailService, EmailService>();
-
-// Настройки JWT и Email
-builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
-builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));
-
-// Если используете Redis
-builder.Services.AddStackExchangeRedisCache(options =>
-{
-    options.Configuration = builder.Configuration.GetConnectionString("Redis");
-});
-// Или для разработки можно использовать MemoryDistributedCache
-// builder.Services.AddDistributedMemoryCache();
-
 // ========================================================
-// 3. Конвейер обработки запросов (Middleware)
+// 3. Конфигурация конвейера обработки запросов (Middleware)
 // ========================================================
 
 // Глобальная обработка ошибок (должна быть первой)
 app.UseMiddleware<ErrorHandlingMiddleware>();
 
-// Логирование запросов (опционально, если есть такой middleware)
+// Логирование запросов и ответов (опционально)
 app.UseMiddleware<RequestLoggingMiddleware>();
 
-// Перенаправление на HTTPS (в production обязательно)
+// Перенаправление на HTTPS (только в продакшене)
 if (app.Environment.IsProduction())
 {
     app.UseHttpsRedirection();
 }
 
-// Swagger только в разработке (можно и в production, если нужно)
+// Swagger UI (только в разработке)
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Company HR API v1");
-        c.RoutePrefix = "swagger"; // http://localhost:5000/swagger
+        c.RoutePrefix = "swagger";
     });
 }
 
-// CORS — выбрать подходящую политику
+// Выбор CORS-политики в зависимости от окружения
 if (app.Environment.IsDevelopment())
 {
     app.UseCors("Development");
 }
 else
 {
-    app.UseCors("FlutterClient");
+    app.UseCors("Production");
 }
 
-app.UseCors("AllowFlutterApp");
-
+// Аутентификация и авторизация
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Маршрутизация контроллеров
 app.MapControllers();
+
+// ========================================================
+// 4. Запуск приложения
+// ========================================================
 app.Run();
