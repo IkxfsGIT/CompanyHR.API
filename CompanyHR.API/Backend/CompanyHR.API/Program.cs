@@ -74,6 +74,8 @@ builder.Services.AddAuthorization();
 
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
+builder.Services.AddHostedService<EmployeeNotificationService>();
+
 // ========== Swagger (OpenAPI) ==========
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
