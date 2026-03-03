@@ -17,7 +17,7 @@ for pkg in "${REQUIRED_PACKAGES[@]}"; do
 done
 
 # Проверка сборки
-echo "Выполняю сборку..."
+echo "Выполняется сборка..."
 dotnet build --no-restore
 if [ $? -eq 0 ]; then
     echo "Сборка успешна"
