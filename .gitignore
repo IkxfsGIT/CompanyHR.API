@@ -1,0 +1,26 @@
+# Результаты сборки
+bin/
+obj/
+Build/
+
+# Пользовательские настройки VS
+.vs/
+*.user
+*.suo
+
+# Локальные конфигурации
+appsettings.Development.json
+appsettings.Production.json
+secrets.json
+
+# Загруженные пользователем файлы
+Uploads/
+wwwroot/uploads/
+
+# Логи
+logs/
+*.log
+
+# Временные файлы
+*.tmp
+*.temp

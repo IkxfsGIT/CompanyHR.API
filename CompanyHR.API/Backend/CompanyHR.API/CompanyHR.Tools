@@ -1,0 +1,168 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
+
+namespace CompanyHR.Tools
+{
+    class Program
+    {
+        static async Task Main(string[] args)
+        {
+            if (args.Length == 0)
+            {
+                Console.WriteLine("Использование: dotnet run -- <command>");
+                Console.WriteLine("Доступные команды: start-dev, run-migrations, verify-integration");
+                return;
+            }
+
+            var command = args[0].ToLowerInvariant();
+
+            switch (command)
+            {
+                case "start-dev":
+                    await StartDev();
+                    break;
+                case "run-migrations":
+                    await RunMigrations();
+                    break;
+                case "verify-integration":
+                    await VerifyIntegration();
+                    break;
+                default:
+                    Console.WriteLine($"Неизвестная команда: {command}");
+                    break;
+            }
+        }
+
+        private static async Task StartDev()
+        {
+            Console.WriteLine("Запуск среды разработки Company HR...");
+
+            // Установка переменных окружения
+            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
+            Environment.SetEnvironmentVariable("DOTNET_WATCH_RESTART_ON_RUDE_EDIT", "1");
+
+            // Путь к проекту (относительный от расположения инструмента)
+            var projectPath = Path.Combine(Directory.GetCurrentDirectory(), "Backend", "CompanyHR.API", "CompanyHR.API.csproj");
+
+            if (!File.Exists(projectPath))
+            {
+                Console.WriteLine($"Проект не найден: {projectPath}");
+                return;
+            }
+
+            // Восстановление зависимостей
+            await RunDotnetCommand("restore", projectPath);
+            // Сборка
+            await RunDotnetCommand("build", projectPath);
+            // Запуск
+            await RunDotnetCommand("run", projectPath);
+        }
+
+        private static async Task RunMigrations()
+        {
+            Console.WriteLine("Запуск миграций базы данных...");
+
+            var projectPath = Path.Combine(Directory.GetCurrentDirectory(), "Backend", "CompanyHR.API", "CompanyHR.API.csproj");
+
+            if (!File.Exists(projectPath))
+            {
+                Console.WriteLine($"Проект не найден: {projectPath}");
+                return;
+            }
+
+            // Применение миграций через EF Core
+            await RunDotnetCommand("ef database update", projectPath);
+        }
+
+        private static async Task VerifyIntegration()
+        {
+            Console.WriteLine("Проверка целостности проекта...");
+
+            var projectPath = Path.Combine(Directory.GetCurrentDirectory(), "Backend", "CompanyHR.API", "CompanyHR.API.csproj");
+
+            if (!File.Exists(projectPath))
+            {
+                Console.WriteLine($"Проект не найден: {projectPath}");
+                return;
+            }
+
+            // Проверка наличия необходимых пакетов
+            string[] requiredPackages = {
+                "AutoMapper.Extensions.Microsoft.DependencyInjection",
+                "FluentValidation.AspNetCore",
+                "Serilog.AspNetCore",
+                "Npgsql.EntityFrameworkCore.PostgreSQL",
+                "Microsoft.EntityFrameworkCore.Design"
+            };
+
+            foreach (var pkg in requiredPackages)
+            {
+                var listOutput = await RunDotnetCommandWithOutput("list package", projectPath);
+                if (!listOutput.Contains(pkg))
+                {
+                    Console.WriteLine($"Отсутствует пакет: {pkg}");
+                    await RunDotnetCommand($"add package {pkg}", projectPath);
+                }
+                else
+                {
+                    Console.WriteLine($"Пакет {pkg} установлен");
+                }
+            }
+
+            // Сборка проекта
+            Console.WriteLine("Выполняю сборку...");
+            var buildResult = await RunDotnetCommand("build", projectPath);
+            if (buildResult == 0)
+                Console.WriteLine("Сборка успешна");
+            else
+                Console.WriteLine("Ошибка сборки");
+        }
+
+        private static async Task<int> RunDotnetCommand(string arguments, string projectPath)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = $"{arguments} \"{projectPath}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null) return -1;
+
+            // Вывод в консоль
+            process.OutputDataReceived += (sender, e) => Console.WriteLine(e.Data);
+            process.ErrorDataReceived += (sender, e) => Console.Error.WriteLine(e.Data);
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            await process.WaitForExitAsync();
+            return process.ExitCode;
+        }
+
+        private static async Task<string> RunDotnetCommandWithOutput(string arguments, string projectPath)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = $"{arguments} \"{projectPath}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null) return string.Empty;
+
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            return output;
+        }
+    }
+}
