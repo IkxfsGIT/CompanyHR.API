@@ -1,26 +1,18 @@
-# Результаты сборки
-bin/
-obj/
-Build/
+# === Flutter ===
+frontend/build/
+frontend/.dart_tool/
+frontend/pubspec.lock
+frontend/android/.gradle/
 
-# Пользовательские настройки VS
-.vs/
-*.user
-*.suo
+# === Node.js ===
+backend/node_modules/
+backend/.env
+backend/npm-debug.log*
 
-# Локальные конфигурации
-appsettings.Development.json
-appsettings.Production.json
-secrets.json
-
-# Загруженные пользователем файлы
-Uploads/
-wwwroot/uploads/
-
-# Логи
-logs/
-*.log
-
-# Временные файлы
-*.tmp
-*.temp
+# === DB & IDE ===
+db/*.local.sql
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
